@@ -2,130 +2,159 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Fiber Survey Logger</title>
+  <title>FTTH Survey Logger</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { font-family: sans-serif; padding: 10px; }
-    video, canvas, img { max-width: 100%; margin: 5px 0; }
+    body { font-family: sans-serif; padding: 10px; max-width: 700px; margin: auto; }
+    button { margin: 5px 0; padding: 8px 14px; }
+    video, canvas, img { max-width: 100%; display: block; margin-bottom: 10px; }
     #map { height: 300px; margin: 10px 0; }
-    .photo-block { margin-bottom: 10px; }
+    .photo-block { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+    textarea { width: 100%; }
   </style>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 </head>
 <body>
-  <h2>📍 Fiber Survey Logger</h2>
-  
-  <button onclick="getLocation()">Get Current Location</button>
+  <h2>📍 FTTH Survey Logger</h2>
+
+  <button onclick="getCurrentLocation()">📡 Get Current Location</button>
   <p id="locationDisplay">Lat: –, Lng: –</p>
   <div id="map"></div>
-  
-  <label>Notes:</label><br>
-  <textarea id="notes" rows="3" cols="30" placeholder="Enter details here..."></textarea>
 
-  <h3>📷 Take 3 Photos</h3>
+  <label>📋 Notes:</label><br>
+  <textarea id="notes" rows="3" placeholder="Enter survey notes..."></textarea>
 
-  <div class="photo-block">
-    <label>Site Front</label><br>
-    <button onclick="capturePhoto(0)">Capture</button>
-    <video id="video0" autoplay playsinline style="display:none;"></video>
-    <canvas id="canvas0" style="display:none;"></canvas>
-    <img id="img0" />
-  </div>
+  <h3>📸 Take 4 Photos</h3>
 
-  <div class="photo-block">
-    <label>Pole</label><br>
-    <button onclick="capturePhoto(1)">Capture</button>
-    <video id="video1" autoplay playsinline style="display:none;"></video>
-    <canvas id="canvas1" style="display:none;"></canvas>
-    <img id="img1" />
-  </div>
+  <div id="photoContainer"></div>
 
-  <div class="photo-block">
-    <label>Splice</label><br>
-    <button onclick="capturePhoto(2)">Capture</button>
-    <video id="video2" autoplay playsinline style="display:none;"></video>
-    <canvas id="canvas2" style="display:none;"></canvas>
-    <img id="img2" />
-  </div>
-
-  <button onclick="downloadZip()">📥 Export as ZIP</button>
+  <button onclick="nextEntry()">➕ Next Entry</button>
+  <button onclick="downloadAll()">📦 Export All as ZIP</button>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
     let latitude = null, longitude = null;
-    let photos = [null, null, null];
+    let marker = null;
+    let entries = [];
+
     const map = L.map('map').setView([14.5995, 120.9842], 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-    let marker = null;
 
-    function getLocation() {
+    map.on('click', function (e) {
+      latitude = e.latlng.lat;
+      longitude = e.latlng.lng;
+      document.getElementById('locationDisplay').textContent = `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`;
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([latitude, longitude]).addTo(map);
+    });
+
+    function getCurrentLocation() {
       navigator.geolocation.getCurrentPosition(pos => {
         latitude = pos.coords.latitude;
         longitude = pos.coords.longitude;
-        document.getElementById('locationDisplay').textContent = 
-          `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`;
+        document.getElementById('locationDisplay').textContent = `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`;
         if (marker) map.removeLayer(marker);
         marker = L.marker([latitude, longitude]).addTo(map);
         map.setView([latitude, longitude], 18);
       }, err => {
-        alert("Location access denied or failed.");
+        alert("Location access denied or unavailable.");
       });
     }
 
-    function capturePhoto(index) {
+    const labels = ["Whole", "Cable Attachment", "Pole Tag", "Additional (optional)"];
+    const photoContainer = document.getElementById("photoContainer");
+
+    labels.forEach((label, i) => {
+      const div = document.createElement("div");
+      div.className = "photo-block";
+      div.innerHTML = `
+        <strong>${label}</strong><br>
+        <button onclick="startCamera(${i})">🎥 Open Camera</button>
+        <button onclick="capture(${i})">📷 Take Photo</button><br>
+        <video id="video${i}" autoplay playsinline style="display:none;" width="320"></video>
+        <canvas id="canvas${i}" style="display:none;"></canvas>
+        <img id="img${i}" />
+      `;
+      photoContainer.appendChild(div);
+    });
+
+    function startCamera(index) {
+      const video = document.getElementById(`video${index}`);
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" }
+      }).then(stream => {
+        video.srcObject = stream;
+        video.style.display = "block";
+      }).catch(err => {
+        alert("Camera access failed.");
+      });
+    }
+
+    function capture(index) {
       const video = document.getElementById(`video${index}`);
       const canvas = document.getElementById(`canvas${index}`);
       const img = document.getElementById(`img${index}`);
-
-      navigator.mediaDevices.getUserMedia({ video: true })
-        .then(stream => {
-          video.srcObject = stream;
-          video.style.display = 'block';
-
-          setTimeout(() => {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0);
-            const imageData = canvas.toDataURL('image/png');
-            photos[index] = imageData;
-            img.src = imageData;
-            video.style.display = 'none';
-            stream.getTracks().forEach(t => t.stop());
-          }, 1500);
-        })
-        .catch(() => alert("Camera access denied."));
+      const ctx = canvas.getContext('2d');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
+      ctx.fillStyle = "#fff";
+      ctx.font = "16px sans-serif";
+      const timestamp = new Date().toLocaleString();
+      const overlay = `📍 ${latitude?.toFixed(6)}, ${longitude?.toFixed(6)} | 🕓 ${timestamp}`;
+      ctx.fillText(overlay, 10, canvas.height - 10);
+      img.src = canvas.toDataURL('image/png');
+      video.srcObject?.getTracks().forEach(track => track.stop());
+      video.style.display = "none";
     }
 
-    function downloadZip() {
+    function nextEntry() {
+      const data = {
+        lat: latitude,
+        lng: longitude,
+        timestamp: new Date().toISOString(),
+        notes: document.getElementById('notes').value,
+        photos: labels.map((_, i) => document.getElementById(`img${i}`).src || null)
+      };
+      entries.push(data);
+      alert("Entry saved. You can now log another.");
+      document.getElementById('notes').value = "";
+      labels.forEach((_, i) => {
+        document.getElementById(`img${i}`).src = "";
+      });
+    }
+
+    function downloadAll() {
+      if (entries.length === 0) return alert("No entries to export.");
       const zip = new JSZip();
-      const folder = zip.folder("fiber-survey");
-
-      const timestamp = new Date().toISOString();
-      const notes = document.getElementById("notes").value;
-
-      const csvData = `Timestamp,Latitude,Longitude,Notes\n"${timestamp}","${latitude}","${longitude}","${notes.replace(/"/g, '""')}"\n`;
-      folder.file("survey.csv", csvData);
-
-      const imageNames = ["site-front.png", "pole.png", "splice.png"];
-
-      const addImages = imageNames.map((name, i) => {
-        return new Promise((resolve) => {
-          if (!photos[i]) return resolve(); // Skip if not captured
-          const base64 = photos[i].split(',')[1];
-          folder.file(name, base64, { base64: true });
-          resolve();
+      const csvRows = [["Timestamp", "Latitude", "Longitude", "Notes"]];
+      entries.forEach((entry, i) => {
+        const folder = zip.folder(`entry-${i + 1}`);
+        csvRows.push([
+          entry.timestamp,
+          entry.lat,
+          entry.lng,
+          entry.notes.replace(/"/g, '""')
+        ]);
+        entry.photos.forEach((src, j) => {
+          if (src?.startsWith("data:image")) {
+            const base64 = src.split(",")[1];
+            const name = `${labels[j].toLowerCase().replace(/ /g, "-")}.png`;
+            folder.file(name, base64, { base64: true });
+          }
         });
       });
 
-      Promise.all(addImages).then(() => {
-        zip.generateAsync({ type: "blob" }).then(content => {
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(content);
-          a.download = `fiber-survey-${Date.now()}.zip`;
-          a.click();
-        });
+      const csv = csvRows.map(r => `"${r.join('","')}"`).join("\n");
+      zip.file("summary.csv", csv);
+      zip.generateAsync({ type: "blob" }).then(blob => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `ftth-survey-${Date.now()}.zip`;
+        a.click();
       });
     }
   </script>
