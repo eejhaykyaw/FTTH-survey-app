@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Fiber Survey Logger</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: sans-serif; padding: 10px; }
+    video, canvas, img { max-width: 100%; margin: 5px 0; }
+    #map { height: 300px; margin: 10px 0; }
+    .photo-block { margin-bottom: 10px; }
+  </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+</head>
+<body>
+  <h2>📍 Fiber Survey Logger</h2>
+  
+  <button onclick="getLocation()">Get Current Location</button>
+  <p id="locationDisplay">Lat: –, Lng: –</p>
+  <div id="map"></div>
+  
+  <label>Notes:</label><br>
+  <textarea id="notes" rows="3" cols="30" placeholder="Enter details here..."></textarea>
+
+  <h3>📷 Take 3 Photos</h3>
+
+  <div class="photo-block">
+    <label>Site Front</label><br>
+    <button onclick="capturePhoto(0)">Capture</button>
+    <video id="video0" autoplay playsinline style="display:none;"></video>
+    <canvas id="canvas0" style="display:none;"></canvas>
+    <img id="img0" />
+  </div>
+
+  <div class="photo-block">
+    <label>Pole</label><br>
+    <button onclick="capturePhoto(1)">Capture</button>
+    <video id="video1" autoplay playsinline style="display:none;"></video>
+    <canvas id="canvas1" style="display:none;"></canvas>
+    <img id="img1" />
+  </div>
+
+  <div class="photo-block">
+    <label>Splice</label><br>
+    <button onclick="capturePhoto(2)">Capture</button>
+    <video id="video2" autoplay playsinline style="display:none;"></video>
+    <canvas id="canvas2" style="display:none;"></canvas>
+    <img id="img2" />
+  </div>
+
+  <button onclick="downloadZip()">📥 Export as ZIP</button>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script>
+    let latitude = null, longitude = null;
+    let photos = [null, null, null];
+    const map = L.map('map').setView([14.5995, 120.9842], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    let marker = null;
+
+    function getLocation() {
+      navigator.geolocation.getCurrentPosition(pos => {
+        latitude = pos.coords.latitude;
+        longitude = pos.coords.longitude;
+        document.getElementById('locationDisplay').textContent = 
+          `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`;
+        if (marker) map.removeLayer(marker);
+        marker = L.marker([latitude, longitude]).addTo(map);
+        map.setView([latitude, longitude], 18);
+      }, err => {
+        alert("Location access denied or failed.");
+      });
+    }
+
+    function capturePhoto(index) {
+      const video = document.getElementById(`video${index}`);
+      const canvas = document.getElementById(`canvas${index}`);
+      const img = document.getElementById(`img${index}`);
+
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+          video.srcObject = stream;
+          video.style.display = 'block';
+
+          setTimeout(() => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+            const imageData = canvas.toDataURL('image/png');
+            photos[index] = imageData;
+            img.src = imageData;
+            video.style.display = 'none';
+            stream.getTracks().forEach(t => t.stop());
+          }, 1500);
+        })
+        .catch(() => alert("Camera access denied."));
+    }
+
+    function downloadZip() {
+      const zip = new JSZip();
+      const folder = zip.folder("fiber-survey");
+
+      const timestamp = new Date().toISOString();
+      const notes = document.getElementById("notes").value;
+
+      const csvData = `Timestamp,Latitude,Longitude,Notes\n"${timestamp}","${latitude}","${longitude}","${notes.replace(/"/g, '""')}"\n`;
+      folder.file("survey.csv", csvData);
+
+      const imageNames = ["site-front.png", "pole.png", "splice.png"];
+
+      const addImages = imageNames.map((name, i) => {
+        return new Promise((resolve) => {
+          if (!photos[i]) return resolve(); // Skip if not captured
+          const base64 = photos[i].split(',')[1];
+          folder.file(name, base64, { base64: true });
+          resolve();
+        });
+      });
+
+      Promise.all(addImages).then(() => {
+        zip.generateAsync({ type: "blob" }).then(content => {
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(content);
+          a.download = `fiber-survey-${Date.now()}.zip`;
+          a.click();
+        });
+      });
+    }
+  </script>
+</body>
+</html>
