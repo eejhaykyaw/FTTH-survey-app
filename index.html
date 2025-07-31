@@ -2,173 +2,167 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FTTH Survey App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Fiber Survey App</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 1rem; }
-    #map { height: 300px; margin-bottom: 1rem; }
-    .photo-label { margin-top: 0.5rem; font-weight: bold; }
-    .preview-img { max-width: 100%; height: auto; margin: 5px 0; }
-    .entry-section { border-top: 1px solid #ccc; padding-top: 1rem; margin-top: 1rem; }
+    #map { height: 300px; width: 100%; margin-bottom: 10px; }
+    video { width: 100%; max-height: 300px; }
+    canvas { display: none; }
+    .hidden { display: none; }
+    .photo-label { font-weight: bold; margin-top: 10px; }
   </style>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 </head>
 <body>
-  <h2>FTTH Survey Logger</h2>
+  <h2>Fiber Survey App</h2>
 
-  <label for="entryName">Name or PoleTag (Folder Name):</label><br />
-  <input type="text" id="entryName" placeholder="e.g. Pole123" required /><br /><br />
+  <label>Poletag / Name:</label><br>
+  <input type="text" id="poletag" placeholder="e.g., Pole123" required><br><br>
 
-  <label for="entryRemarks">Description or Remarks:</label><br />
-  <textarea id="entryRemarks" rows="2" placeholder="Enter additional notes..."></textarea><br /><br />
+  <label>Description / Remarks:</label><br>
+  <textarea id="description" placeholder="e.g., Near transformer" rows="2"></textarea><br><br>
 
   <div id="map"></div>
-  <button onclick="getCurrentLocation()">Use Current Location</button>
-  <button onclick="enableMapClick()">Place Pin Manually</button>
+  <button id="getLocation">Use My Current Location</button><br><br>
+  <label>Latitude:</label> <input type="text" id="lat" />
+  <label>Longitude:</label> <input type="text" id="lng" /><br><br>
 
-  <div class="entry-section">
-    <div class="photo-label">1. Whole</div>
-    <button onclick="capturePhoto('Whole')">Take Photo</button>
-    <img id="preview-Whole" class="preview-img" />
-
-    <div class="photo-label">2. Cable Attachment</div>
-    <button onclick="capturePhoto('CableAttachment')">Take Photo</button>
-    <img id="preview-CableAttachment" class="preview-img" />
-
-    <div class="photo-label">3. Pole Tag</div>
-    <button onclick="capturePhoto('PoleTag')">Take Photo</button>
-    <img id="preview-PoleTag" class="preview-img" />
-
-    <div class="photo-label">4. Additional (optional)</div>
-    <button onclick="capturePhoto('Additional')">Take Photo</button>
-    <img id="preview-Additional" class="preview-img" />
+  <button id="startCamera">Turn On Camera</button>
+  <div id="cameraControls" class="hidden">
+    <video id="video" autoplay playsinline></video>
+    <label for="zoomSlider">Zoom:</label>
+    <input type="range" id="zoomSlider" min="1" max="3" step="0.1" />
+    <br><br>
+    <button id="capturePhoto">📸 Capture Photo</button>
+    <p class="photo-label" id="photoLabel"></p>
   </div>
 
-  <button onclick="saveEntry()">Next Entry</button>
-  <button onclick="exportAll()">Export All (ZIP)</button>
+  <canvas id="canvas"></canvas>
+  <br><br>
+  <button id="exportData">⬇️ Export CSV + Images (ZIP)</button>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.7.1/dist/jszip.min.js"></script>
   <script>
-    let map = L.map('map').setView([14.5995, 120.9842], 13);
+    let map, marker, cameraStream, capturedPhotos = [], photoCount = 0;
+    let latInput = document.getElementById('lat');
+    let lngInput = document.getElementById('lng');
+    let coordsLocked = false;
+
+    // Initialize Leaflet Map
+    map = L.map('map').setView([14.5995, 120.9842], 13); // default to Manila
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    let marker = null;
-    let entries = [];
-    let images = {};
-    let activeStream = null;
+    marker = L.marker(map.getCenter(), { draggable: true }).addTo(map);
+    updateLatLng(marker.getLatLng());
 
-    function getCurrentLocation() {
+    marker.on('dragend', () => {
+      if (!coordsLocked) updateLatLng(marker.getLatLng());
+    });
+
+    function updateLatLng(latlng) {
+      latInput.value = latlng.lat.toFixed(6);
+      lngInput.value = latlng.lng.toFixed(6);
+    }
+
+    map.on('click', function(e) {
+      if (!coordsLocked) {
+        marker.setLatLng(e.latlng);
+        updateLatLng(e.latlng);
+      }
+    });
+
+    document.getElementById('getLocation').addEventListener('click', () => {
+      if (!navigator.geolocation) return alert("Geolocation not supported.");
       navigator.geolocation.getCurrentPosition(pos => {
         const { latitude, longitude } = pos.coords;
-        setMarker(latitude, longitude);
+        marker.setLatLng([latitude, longitude]);
+        map.setView([latitude, longitude], 17);
+        updateLatLng({ lat: latitude, lng: longitude });
       });
-    }
+    });
 
-    function enableMapClick() {
-      map.once('click', e => {
-        const { lat, lng } = e.latlng;
-        setMarker(lat, lng);
-      });
-    }
+    document.getElementById('startCamera').addEventListener('click', async () => {
+      const video = document.getElementById('video');
+      const zoomSlider = document.getElementById('zoomSlider');
+      const cameraControls = document.getElementById('cameraControls');
 
-    function setMarker(lat, lng) {
-      if (marker) map.removeLayer(marker);
-      marker = L.marker([lat, lng]).addTo(map);
-      marker.bindPopup(`Pinned: ${lat.toFixed(5)}, ${lng.toFixed(5)}`).openPopup();
-      map.setView([lat, lng], 17);
-    }
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = cameraStream;
+        cameraControls.classList.remove('hidden');
 
-    async function capturePhoto(label) {
-      const constraints = {
-        video: {
-          facingMode: 'environment',
-          zoom: true
-        },
-        audio: false
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      activeStream = stream;
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      await video.play();
-
-      const track = stream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities();
-      if (capabilities.zoom) {
-        const zoom = prompt("Zoom level (min: " + capabilities.zoom.min + ", max: " + capabilities.zoom.max + "):", capabilities.zoom.min);
-        if (zoom) track.applyConstraints({ advanced: [{ zoom: parseFloat(zoom) }] });
-      }
-
-      setTimeout(() => {
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0);
-
-        const timestamp = new Date().toISOString();
-        const coords = marker ? marker.getLatLng() : { lat: 0, lng: 0 };
-        ctx.fillStyle = "white";
-        ctx.font = "20px Arial";
-        ctx.fillText(`${timestamp}`, 10, 30);
-        ctx.fillText(`Lat: ${coords.lat.toFixed(5)} Lng: ${coords.lng.toFixed(5)}`, 10, 60);
-
-        const dataUrl = canvas.toDataURL('image/jpeg');
-        document.getElementById(`preview-${label}`).src = dataUrl;
-        images[label] = dataUrl;
-
-        video.pause();
-        track.stop();
-      }, 1000);
-    }
-
-    function saveEntry() {
-      const name = document.getElementById('entryName').value.trim();
-      const remarks = document.getElementById('entryRemarks').value.trim();
-      if (!name) return alert("Enter name or poletag");
-      if (!marker) return alert("Please place a pin on the map");
-
-      const { lat, lng } = marker.getLatLng();
-      const entry = {
-        name,
-        remarks,
-        lat,
-        lng,
-        images: { ...images }
-      };
-      entries.push(entry);
-      images = {};
-
-      document.querySelectorAll('img').forEach(img => (img.src = ''));
-      document.getElementById('entryName').value = '';
-      document.getElementById('entryRemarks').value = '';
-      if (marker) map.removeLayer(marker);
-      marker = null;
-
-      alert("Entry saved. Ready for next.");
-    }
-
-    async function exportAll() {
-      const zip = new JSZip();
-      const csvRows = ["Name,Latitude,Longitude,Remarks"];
-      for (const entry of entries) {
-        const folder = zip.folder(entry.name);
-        csvRows.push(`${entry.name},${entry.lat},${entry.lng},"${entry.remarks}"`);
-        for (const [label, dataUrl] of Object.entries(entry.images)) {
-          const base64 = dataUrl.split(',')[1];
-          folder.file(`${entry.name}_${label}.jpg`, base64, { base64: true });
+        const [track] = cameraStream.getVideoTracks();
+        const capabilities = track.getCapabilities();
+        if ('zoom' in capabilities) {
+          zoomSlider.min = capabilities.zoom.min || 1;
+          zoomSlider.max = capabilities.zoom.max || 3;
+          zoomSlider.step = capabilities.zoom.step || 0.1;
+          zoomSlider.value = track.getSettings().zoom || 1;
+          zoomSlider.addEventListener('input', () => {
+            track.applyConstraints({ advanced: [{ zoom: parseFloat(zoomSlider.value) }] });
+          });
         }
+      } catch (e) {
+        alert("Camera error: " + e);
       }
-      zip.file("summary.csv", csvRows.join("\n"));
-      const content = await zip.generateAsync({ type: "blob" });
-      saveAs(content, "survey_export.zip");
-    }
+    });
+
+    document.getElementById('capturePhoto').addEventListener('click', () => {
+      const poletag = document.getElementById('poletag').value.trim();
+      if (!poletag) return alert("Please enter a name or poletag.");
+      if (!coordsLocked) coordsLocked = true;
+
+      const description = document.getElementById('description').value.trim();
+      const lat = latInput.value;
+      const lng = lngInput.value;
+
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const label = ["Whole", "Cable", "PoleTag", "Additional"][photoCount] || `Photo${photoCount+1}`;
+      const fileName = `${poletag}_${label}.jpg`;
+
+      const overlayText = `${fileName}\n${lat}, ${lng}\n${timestamp}`;
+      ctx.fillStyle = "white";
+      ctx.font = "30px sans-serif";
+      ctx.fillText(overlayText, 20, 40);
+
+      canvas.toBlob(blob => {
+        capturedPhotos.push({ blob, fileName, poletag, description, lat, lng });
+        photoCount++;
+        document.getElementById('photoLabel').innerText = `Saved: ${fileName}`;
+      }, 'image/jpeg');
+    });
+
+    document.getElementById('exportData').addEventListener('click', () => {
+      if (capturedPhotos.length === 0) return alert("No photos captured.");
+      const zip = new JSZip();
+      const csvRows = [["Poletag", "Description", "Latitude", "Longitude", "Filename"]];
+
+      capturedPhotos.forEach(photo => {
+        const folder = zip.folder(photo.poletag);
+        folder.file(photo.fileName, photo.blob);
+        csvRows.push([photo.poletag, photo.description, photo.lat, photo.lng, photo.fileName]);
+      });
+
+      const csvContent = csvRows.map(row => row.join(",")).join("\n");
+      zip.file("summary.csv", csvContent);
+
+      zip.generateAsync({ type: "blob" }).then(content => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(content);
+        a.download = "fiber_survey.zip";
+        a.click();
+      });
+    });
   </script>
 </body>
 </html>
