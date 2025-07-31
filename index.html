@@ -1,61 +1,112 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FTTH Survey App</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 1em; margin: 0; }
-    #map { height: 300px; margin-bottom: 10px; }
-    video { width: 100%; height: auto; }
-    canvas { display: none; }
-    input, button, select, textarea { margin: 5px 0; padding: 8px; width: 100%; max-width: 500px; }
-    .photo-label { font-weight: bold; margin-top: 10px; }
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+
+    #map {
+      height: 300px;
+    }
+
+    #video {
+      width: 100%;
+      max-height: 300px;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    .photo-set button {
+      margin: 5px;
+      padding: 10px;
+    }
+
+    #zoomSlider {
+      width: 100%;
+    }
   </style>
-  <script src="https://unpkg.com/idb@7/build/iife/index-min.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </head>
+
 <body>
   <h1>FTTH Survey App</h1>
 
   <div id="map"></div>
-  <button onclick="getCurrentLocation()">📍 Use Current Location</button>
-  <input id="latitude" placeholder="Latitude" />
-  <input id="longitude" placeholder="Longitude" />
+  <button id="getLocation">📍 Use Current Location</button>
+  <br>
+  <label>Latitude: <input type="text" id="latitude"></label>
+  <label>Longitude: <input type="text" id="longitude"></label>
 
-  <input id="poletag" placeholder="Name or Poletag (required)" />
-  <textarea id="description" placeholder="Remarks / Description"></textarea>
+  <h3>Pole Tag / Location Name</h3>
+  <input type="text" id="locationName" placeholder="e.g. Pole123">
 
-  <div id="camera-container">
-    <video id="camera" autoplay muted playsinline></video>
-    <button onclick="captureImage()">📸 Capture</button>
+  <video id="video" autoplay muted playsinline></video>
+  <input type="range" id="zoomSlider" min="1" max="3" step="0.1">
+
+  <div class="photo-set">
+    <button onclick="capturePhoto('Whole')">Capture Whole</button>
+    <button onclick="capturePhoto('CableAttachment')">Capture Cable Attachment</button>
+    <button onclick="capturePhoto('PoleTag')">Capture Pole Tag</button>
+    <button onclick="capturePhoto('Additional')">Capture Additional (Optional)</button>
   </div>
+
+  <br>
+  <button onclick="nextEntry()">➕ Next Entry</button>
+  <button onclick="downloadData()">📦 Export Zip</button>
+
+  <script src="https://unpkg.com/idb-keyval@6/dist/idb-keyval.iife.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+
   <canvas id="canvas"></canvas>
 
-  <div id="labels">
-    <div class="photo-label">1. Whole</div>
-    <div class="photo-label">2. Cable Attachment</div>
-    <div class="photo-label">3. Pole Tag</div>
-    <div class="photo-label">4. Additional (optional)</div>
-  </div>
-
-  <button onclick="nextEntry()">➕ Next Entry</button>
-  <button onclick="exportZip()">💾 Export as ZIP</button>
-
   <script>
-    let map, marker, currentCoords = {}, db, mediaStream;
+    let map, marker, currentCoords = null;
+    let video = document.getElementById('video');
+    let canvas = document.getElementById('canvas');
+    let zoomSlider = document.getElementById('zoomSlider');
     let entries = [];
-    let images = [];
-    const photoTypes = ['Whole', 'Cable_Attachment', 'Poletag', 'Additional'];
-    let currentPhotoIndex = 0;
+    let currentEntry = {};
 
-    async function initMap() {
-      map = L.map('map').setView([14.5995, 120.9842], 15);
+    async function initCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', zoom: true } });
+      video.srcObject = stream;
+      const track = stream.getVideoTracks()[0];
+      const capabilities = track.getCapabilities();
+      const settings = track.getSettings();
+      if (capabilities.zoom) {
+        zoomSlider.min = capabilities.zoom.min;
+        zoomSlider.max = capabilities.zoom.max;
+        zoomSlider.step = capabilities.zoom.step || 0.1;
+        zoomSlider.value = settings.zoom || capabilities.zoom.min;
+        zoomSlider.oninput = () => {
+          track.applyConstraints({ advanced: [{ zoom: zoomSlider.value }] });
+        };
+      } else {
+        zoomSlider.style.display = 'none';
+      }
+    }
+
+    function initMap() {
+      map = L.map('map').setView([14.5995, 120.9842], 13);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
+        attribution: '© OpenStreetMap contributors'
       }).addTo(map);
-      map.on('click', e => setCoords(e.latlng.lat, e.latlng.lng));
+
+      map.on('click', function (e) {
+        if (currentEntry.capturing) return;
+        setCoords(e.latlng.lat, e.latlng.lng);
+      });
     }
 
     function setCoords(lat, lng) {
@@ -66,108 +117,82 @@
       marker = L.marker([lat, lng]).addTo(map);
     }
 
-    function getCurrentLocation() {
+    document.getElementById('getLocation').onclick = () => {
+      if (currentEntry.capturing) return;
       navigator.geolocation.getCurrentPosition(pos => {
         setCoords(pos.coords.latitude, pos.coords.longitude);
         map.setView([pos.coords.latitude, pos.coords.longitude], 18);
       });
-    }
+    };
 
-    async function startCamera() {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-      document.getElementById('camera').srcObject = mediaStream;
-    }
+    async function capturePhoto(label) {
+      if (!currentCoords) return alert("Please set a location first.");
 
-    function captureImage() {
-      if (!mediaStream) return alert('Camera not started');
-      const canvas = document.getElementById('canvas');
-      const video = document.getElementById('camera');
+      currentEntry.capturing = true;
+      let lat = currentCoords.lat.toFixed(5);
+      let lng = currentCoords.lng.toFixed(5);
+      let name = document.getElementById('locationName').value.trim() || 'Entry';
+      let address = await fetchAddress(lat, lng);
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      canvas.getContext('2d').drawImage(video, 0, 0);
-      embedAndStore(canvas);
-    }
-
-    async function embedAndStore(canvas) {
-      const ctx = canvas.getContext('2d');
+      let ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
       ctx.fillStyle = 'white';
-      ctx.font = '20px Arial';
-      const ts = new Date().toLocaleString();
-      const coordsText = `Lat: ${currentCoords.lat?.toFixed(5)}, Lng: ${currentCoords.lng?.toFixed(5)}`;
-      ctx.fillText(ts, 10, 30);
-      ctx.fillText(coordsText, 10, 60);
+      ctx.font = '20px sans-serif';
+      ctx.fillText(`📍 ${lat}, ${lng}`, 10, canvas.height - 35);
+      ctx.fillText(`${new Date().toLocaleString()}`, 10, canvas.height - 15);
+      if (address) ctx.fillText(address, 10, canvas.height - 55);
 
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
-      const poletag = document.getElementById('poletag').value.trim().replaceAll(' ', '_');
-      const label = photoTypes[currentPhotoIndex];
-      images.push({
-        folder: poletag,
-        filename: `${poletag}_${label}.jpg`,
-        blob
-      });
-      currentPhotoIndex++;
+      canvas.toBlob(blob => {
+        currentEntry[label] = { name: `${name}_${label}.jpg`, blob };
+        alert(`${label} photo saved.`);
+      }, 'image/jpeg');
+    }
 
-      if (currentPhotoIndex >= photoTypes.length) {
-        alert('All images captured');
-      } else {
-        alert(`Next: ${photoTypes[currentPhotoIndex]}`);
+    async function fetchAddress(lat, lng) {
+      try {
+        let res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+        let json = await res.json();
+        return json.address.road || json.address.village || json.address.city || json.address.town || '';
+      } catch {
+        return '';
       }
     }
 
-    function nextEntry() {
-      const poletag = document.getElementById('poletag').value.trim();
-      const description = document.getElementById('description').value.trim();
-      const lat = document.getElementById('latitude').value;
-      const lng = document.getElementById('longitude').value;
-
-      if (!poletag || !lat || !lng || images.length < 3) {
-        alert('Missing data or images. Capture at least 3 photos.');
-        return;
+    async function nextEntry() {
+      if (!currentEntry.Whole || !currentEntry.CableAttachment || !currentEntry.PoleTag) {
+        alert("Please capture required photos."); return;
       }
-
-      entries.push({
-        poletag,
-        description,
-        latitude: lat,
-        longitude: lng,
-        timestamp: new Date().toISOString()
-      });
-      currentPhotoIndex = 0;
-      images = [];
-      document.getElementById('poletag').value = '';
-      document.getElementById('description').value = '';
-      document.getElementById('latitude').value = '';
-      document.getElementById('longitude').value = '';
-      if (marker) map.removeLayer(marker);
-      alert('Entry saved. Ready for next.');
+      let name = document.getElementById('locationName').value.trim() || 'Entry';
+      let lat = currentCoords.lat;
+      let lng = currentCoords.lng;
+      entries.push({ name, lat, lng, ...currentEntry });
+      currentEntry = {}; // reset for next
+      alert("Entry saved. You can now capture the next one.");
     }
 
-    async function exportZip() {
-      const zip = new JSZip();
-      const csvLines = ['Poletag,Description,Latitude,Longitude,Timestamp'];
-      entries.forEach(entry => {
-        csvLines.push(`${entry.poletag},"${entry.description}",${entry.latitude},${entry.longitude},${entry.timestamp}`);
-      });
-      zip.file('summary.csv', csvLines.join('\n'));
-
-      for (const entry of entries) {
-        const folder = zip.folder(entry.poletag);
-        for (const img of images.filter(i => i.folder === entry.poletag)) {
-          folder.file(img.filename, img.blob);
+    async function downloadData() {
+      let zip = new JSZip();
+      let csv = "Name,Lat,Lng\n";
+      for (let entry of entries) {
+        let folder = zip.folder(entry.name);
+        csv += `${entry.name},${entry.lat},${entry.lng}\n`;
+        for (let key of ['Whole', 'CableAttachment', 'PoleTag', 'Additional']) {
+          if (entry[key]) folder.file(entry[key].name, entry[key].blob);
         }
       }
-      const content = await zip.generateAsync({ type: 'blob' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(content);
-      a.download = 'FTTH-survey-data.zip';
-      a.click();
+      zip.file("data.csv", csv);
+      let blob = await zip.generateAsync({ type: 'blob' });
+      saveAs(blob, "FTTH_Survey_Export.zip");
+      entries = []; // clear after export
     }
 
-    window.onload = () => {
-      initMap();
-      startCamera();
-    };
+    initMap();
+    initCamera();
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </body>
+
 </html>
