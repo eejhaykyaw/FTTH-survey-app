@@ -2,194 +2,160 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>FTTH Survey App</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FTTH Survey App</title>
   <style>
-    body { font-family: sans-serif; padding: 1rem; }
-    #map { height: 300px; margin-bottom: 1rem; }
+    body { font-family: Arial; margin: 0; padding: 0; }
+    #map { height: 300px; width: 100%; }
     video, canvas { width: 100%; max-height: 300px; }
-    .btn { padding: 0.5rem; margin: 0.25rem; }
-    .flex { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    .input-row { margin-bottom: 0.5rem; }
-    label { display: block; margin-top: 0.5rem; }
-    #zoomSlider { width: 100%; }
+    .section { padding: 10px; }
+    .buttons button { margin: 5px 0; width: 100%; }
+    .zoom-slider { width: 100%; }
   </style>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 </head>
 <body>
-  <h2>FTTH Survey App</h2>
-
-  <div id="map"></div>
-  <button onclick="getCurrentLocation()">📍 Use Current Location</button>
-
-  <div class="input-row">
-    <label>Pole Tag / Name:</label>
-    <input type="text" id="poletag" />
+  <div class="section">
+    <h2>FTTH Survey App</h2>
+    <div id="map"></div>
+    <button onclick="getCurrentLocation()">📍 Use Current Location</button>
+    <input id="latitude" placeholder="Latitude" />
+    <input id="longitude" placeholder="Longitude" />
+    <input id="poletag" placeholder="Name or Pole Tag" />
+    <input id="description" placeholder="Description or Remarks" />
+  </div>
+  <div class="section">
+    <video id="camera" autoplay muted playsinline></video>
+    <input type="range" id="zoomSlider" class="zoom-slider" min="1" max="3" step="0.1">
+    <div class="buttons">
+      <button onclick="startCamera()">Start Camera</button>
+      <button onclick="captureImage('Whole')">📸 Whole</button>
+      <button onclick="captureImage('Cable Attachment')">📸 Cable Attachment</button>
+      <button onclick="captureImage('Pole Tag')">📸 Pole Tag</button>
+      <button onclick="captureImage('Additional')">📸 Additional</button>
+    </div>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div id="imagePreview"></div>
+  </div>
+  <div class="section">
+    <button onclick="nextEntry()">➕ Next Entry</button>
+    <button onclick="exportData()">💾 Export CSV + Images</button>
   </div>
 
-  <div class="input-row">
-    <label>Description / Remarks:</label>
-    <input type="text" id="description" />
-  </div>
-
-  <div class="input-row">
-    <label>Coordinates:</label>
-    <input type="text" id="latitude" readonly />
-    <input type="text" id="longitude" readonly />
-  </div>
-
-  <video id="video" autoplay playsinline></video>
-  <input type="range" id="zoomSlider" min="1" max="3" step="0.1" value="1" />
-
-  <div class="flex">
-    <button class="btn" onclick="capturePhoto('Whole')">📷 Whole</button>
-    <button class="btn" onclick="capturePhoto('Cable')">📷 Cable Attachment</button>
-    <button class="btn" onclick="capturePhoto('Poletag')">📷 Pole Tag</button>
-    <button class="btn" onclick="capturePhoto('Additional')">📷 Additional</button>
-  </div>
-
-  <div class="flex">
-    <button class="btn" onclick="nextEntry()">Next Entry ➕</button>
-    <button class="btn" onclick="downloadZip()">📁 Export All Entries</button>
-  </div>
-
-  <canvas id="canvas" style="display:none;"></canvas>
-
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.7.1/dist/jszip.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/idb@7/build/iife/index-min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
 
   <script>
-    let map, marker, latInput = document.getElementById('latitude'),
-        lngInput = document.getElementById('longitude'),
-        firstPhotoTaken = false;
+    let map = L.map('map').setView([14.5995, 120.9842], 13);
+    let marker = null;
+    let entries = [];
+    let images = [];
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(stream => {
-        video.srcObject = stream;
-        window.track = stream.getVideoTracks()[0];
-      });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: 'Map data © <a href="https://openstreetmap.org">OpenStreetMap</a>'
+    }).addTo(map);
 
-    document.getElementById('zoomSlider').addEventListener('input', e => {
-      const zoom = e.target.value;
-      if (track && track.getCapabilities().zoom) {
-        track.applyConstraints({ advanced: [{ zoom }] });
+    map.on('click', function(e) {
+      if (images.length === 0) {
+        const { lat, lng } = e.latlng;
+        setMarker(lat, lng);
       }
     });
 
-    function initMap() {
-      map = L.map('map').setView([14.5995, 120.9842], 16);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-      marker = L.marker(map.getCenter(), { draggable: true }).addTo(map)
-        .on('drag', updateLatLng);
-      updateLatLng();
-
-      map.on('click', e => {
-        if (!firstPhotoTaken) {
-          marker.setLatLng(e.latlng);
-          updateLatLng();
-        }
-      });
-    }
-
-    function updateLatLng() {
-      const latlng = marker.getLatLng();
-      latInput.value = latlng.lat.toFixed(6);
-      lngInput.value = latlng.lng.toFixed(6);
+    function setMarker(lat, lng) {
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([lat, lng]).addTo(map);
+      document.getElementById("latitude").value = lat.toFixed(6);
+      document.getElementById("longitude").value = lng.toFixed(6);
     }
 
     function getCurrentLocation() {
       navigator.geolocation.getCurrentPosition(pos => {
-        const { latitude, longitude } = pos.coords;
-        if (!firstPhotoTaken) {
-          marker.setLatLng([latitude, longitude]);
-          map.setView([latitude, longitude], 17);
-          updateLatLng();
-        }
+        setMarker(pos.coords.latitude, pos.coords.longitude);
+        map.setView([pos.coords.latitude, pos.coords.longitude], 18);
       });
     }
 
-    async function capturePhoto(label) {
-      if (!document.getElementById('poletag').value.trim()) {
-        alert("Enter Pole Tag / Name first.");
-        return;
+    let cameraStream;
+    async function startCamera() {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      const video = document.getElementById("camera");
+      video.srcObject = cameraStream;
+
+      const [track] = cameraStream.getVideoTracks();
+      const capabilities = track.getCapabilities();
+      const zoomSlider = document.getElementById("zoomSlider");
+
+      if (capabilities.zoom) {
+        zoomSlider.min = capabilities.zoom.min;
+        zoomSlider.max = capabilities.zoom.max;
+        zoomSlider.step = capabilities.zoom.step || 0.1;
+        zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
+        zoomSlider.oninput = () => track.applyConstraints({ advanced: [{ zoom: zoomSlider.value }] });
       }
+    }
 
-      firstPhotoTaken = true;
-
-      const canvas = document.getElementById('canvas');
-      const ctx = canvas.getContext('2d');
+    async function captureImage(label) {
+      const canvas = document.getElementById("canvas");
+      const video = document.getElementById("camera");
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
       ctx.drawImage(video, 0, 0);
 
-      const lat = latInput.value;
-      const lng = lngInput.value;
+      const lat = document.getElementById("latitude").value;
+      const lng = document.getElementById("longitude").value;
+      const address = marker ? marker.getLatLng().toString() : "Unknown";
 
-      // Get short address
-      let address = '';
-      try {
-        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
-        const data = await response.json();
-        address = data.address.road + ', ' + (data.address.suburb || data.address.village || '') + ', ' + data.address.city;
-      } catch (e) {}
-
-      // Overlay
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillRect(0, canvas.height - 80, canvas.width, 80);
+      const ts = new Date().toLocaleString();
       ctx.fillStyle = "white";
-      ctx.font = "20px sans-serif";
-      const time = new Date().toLocaleString();
-      ctx.fillText(`📍 ${lat}, ${lng}`, 10, canvas.height - 50);
-      ctx.fillText(`🕒 ${time}`, 10, canvas.height - 25);
-      if (address) ctx.fillText(`📌 ${address}`, 10, canvas.height - 5);
+      ctx.font = "20px Arial";
+      ctx.fillText(`📍 ${address}`, 10, canvas.height - 60);
+      ctx.fillText(`⏱️ ${ts}`, 10, canvas.height - 40);
+      ctx.fillText(`📌 ${lat}, ${lng}`, 10, canvas.height - 20);
 
-      const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg"));
-      const poletag = document.getElementById('poletag').value.trim();
-      const filename = `${poletag}_${label}.jpg`;
-
-      entries[currentEntry] = entries[currentEntry] || { images: {}, tag: poletag, desc: document.getElementById('description').value.trim(), lat, lng, timestamp: time };
-      entries[currentEntry].images[label] = blob;
-
-      alert(`${label} photo saved.`);
+      canvas.toBlob(blob => {
+        const poletag = document.getElementById("poletag").value || "Entry";
+        const filename = `${poletag}_${label.replace(" ", "_")}.jpg`;
+        images.push({ name: filename, blob });
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(blob);
+        img.width = 100;
+        document.getElementById("imagePreview").appendChild(img);
+      }, "image/jpeg");
     }
-
-    let entries = {}, currentEntry = 0;
 
     function nextEntry() {
-      if (!entries[currentEntry]) {
-        alert("Please capture at least one photo before proceeding.");
-        return;
-      }
-      currentEntry++;
-      document.getElementById('poletag').value = '';
-      document.getElementById('description').value = '';
-      firstPhotoTaken = false;
-      alert("Ready for next entry.");
+      const poletag = document.getElementById("poletag").value || "Entry";
+      const remarks = document.getElementById("description").value || "";
+      const lat = document.getElementById("latitude").value;
+      const lng = document.getElementById("longitude").value;
+      entries.push({ poletag, remarks, lat, lng, images: [...images] });
+      images = [];
+      document.getElementById("imagePreview").innerHTML = "";
+      document.getElementById("poletag").value = "";
+      document.getElementById("description").value = "";
     }
 
-    async function downloadZip() {
+    async function exportData() {
       const zip = new JSZip();
-      const csv = ["Poletag,Description,Latitude,Longitude,Timestamp"];
+      const csv = ["Name,Description,Latitude,Longitude"];
 
-      Object.values(entries).forEach(entry => {
-        const folder = zip.folder(entry.tag);
-        csv.push(`${entry.tag},${entry.desc},${entry.lat},${entry.lng},${entry.timestamp}`);
-        for (let [label, blob] of Object.entries(entry.images)) {
-          folder.file(`${entry.tag}_${label}.jpg`, blob);
+      for (let entry of entries) {
+        csv.push(`${entry.poletag},${entry.remarks},${entry.lat},${entry.lng}`);
+        const folder = zip.folder(entry.poletag);
+        for (let img of entry.images) {
+          folder.file(img.name, img.blob);
         }
-      });
+      }
 
       zip.file("summary.csv", csv.join("\n"));
       const blob = await zip.generateAsync({ type: "blob" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = "FTTH_Survey.zip";
+      link.download = "FTTH_Survey_Export.zip";
       link.click();
     }
-
-    window.onload = initMap;
   </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </body>
 </html>
