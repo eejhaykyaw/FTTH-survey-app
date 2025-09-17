@@ -111,15 +111,17 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
       const address = marker ? marker.getLatLng().toString() : "Unknown";
       const poletagValue = document.getElementById("poletag").value || "No Pole Tag";
 ctx.fillText(`📍 ${poletagValue}`, 10, canvas.height - 60);
+      const descriptionValue = document.getElementById("description").value || "No Description";
 
       const ts = new Date().toLocaleString();
       ctx.fillStyle = "white";
       ctx.font = "20px Arial";
-      ctx.fillText(`📍 ${poletagValue}`, 10, canvas.height - 60);
+      ctx.fillText(`📍 ${poletagValue}`, 10, canvas.height - 80);
+      ctx.fillText(`📋 ${descriptionValue}`, 10, canvas.height - 60); // Description
       ctx.fillText(`⏱️ ${ts}`, 10, canvas.height - 40);
       ctx.fillText(`📌 ${lat}, ${lng}`, 10, canvas.height - 20);
 
-      canvas.toBlob(blob => {
+      canvas.toBlob(blob => {up
         const poletag = document.getElementById("poletag").value || "Entry";
         const filename = `${poletag}_${label.replace(" ", "_")}.jpg`;
         images.push({ name: filename, blob });
