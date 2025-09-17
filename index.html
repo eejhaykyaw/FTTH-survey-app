@@ -109,11 +109,13 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
       const lat = document.getElementById("latitude").value;
       const lng = document.getElementById("longitude").value;
       const address = marker ? marker.getLatLng().toString() : "Unknown";
+      const poletagValue = document.getElementById("poletag").value || "No Pole Tag";
+ctx.fillText(`📍 ${poletagValue}`, 10, canvas.height - 60);
 
       const ts = new Date().toLocaleString();
       ctx.fillStyle = "white";
       ctx.font = "20px Arial";
-      ctx.fillText(`📍 ${address}`, 10, canvas.height - 60);
+      ctx.fillText(`📍 ${poletagValue}`, 10, canvas.height - 60);
       ctx.fillText(`⏱️ ${ts}`, 10, canvas.height - 40);
       ctx.fillText(`📌 ${lat}, ${lng}`, 10, canvas.height - 20);
 
