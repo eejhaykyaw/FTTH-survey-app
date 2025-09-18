@@ -3,23 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RTA Survey App</title>
+  <title>Survey App</title>
   <style>
     body { font-family: Arial; margin: 0; padding: 0; }
     #map { height: 300px; width: 100%; }
     video, canvas { width: 100%; max-height: 300px; }
     .section { padding: 10px; }
-
-button { font-size: 18px; padding: 12px; border-radius: 6px; }
-
-.buttons button { margin: 8px 0; width: 100%; }
-
+    button { font-size: 18px; padding: 12px; border-radius: 6px; }
+    .buttons button { margin: 8px 0; width: 100%; }
     .zoom-slider { width: 100%; }
   </style>
 </head>
 <body>
   <div class="section">
-    <h2>RTA Survey App</h2>
+    <h2>Survey App</h2>
     <div id="map"></div>
     <button onclick="getCurrentLocation()">📍 Use Current Location</button>
     <input id="latitude" placeholder="Latitude" />
@@ -43,26 +40,26 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
   <div class="section">
     <button onclick="nextEntry()">➕ Next Entry</button>
     <button onclick="exportData()">💾 Export CSV + Images</button>
+    <button onclick="clearDB()">🗑️ Clear All Data</button>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
   <script>
+    // ---------------- MAP ----------------
     let map = L.map('map').setView([14.5995, 120.9842], 13);
     let marker = null;
-    let entries = [];
-    let images = [];
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: 'Map data © <a href="https://openstreetmap.org">OpenStreetMap</a>'
     }).addTo(map);
 
     map.on('click', function(e) {
-      if (images.length === 0) {
-        const { lat, lng } = e.latlng;
-        setMarker(lat, lng);
-      }
+      const { lat, lng } = e.latlng;
+      setMarker(lat, lng);
     });
 
     function setMarker(lat, lng) {
@@ -79,6 +76,7 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
       });
     }
 
+    // ---------------- CAMERA ----------------
     let cameraStream;
     async function startCamera() {
       cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
@@ -109,18 +107,21 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
       const lat = document.getElementById("latitude").value;
       const lng = document.getElementById("longitude").value;
       const poletagValue = document.getElementById("poletag").value || "No Pole Tag";
+      const remarks = document.getElementById("description").value || "";
 
       const ts = new Date().toLocaleString();
       ctx.fillStyle = "white";
       ctx.font = "20px Arial";
-      ctx.fillText(`📍 ${poletagValue}`, 10, canvas.height - 60);
+      ctx.fillText(`📍 ${poletagValue}`, 10, canvas.height - 80);
+      ctx.fillText(`📝 ${remarks}`, 10, canvas.height - 60);
       ctx.fillText(`⏱️ ${ts}`, 10, canvas.height - 40);
       ctx.fillText(`📌 ${lat}, ${lng}`, 10, canvas.height - 20);
 
       canvas.toBlob(blob => {
-        const poletag = document.getElementById("poletag").value || "Entry";
-        const filename = `${poletag}_${label.replace(" ", "_")}.jpg`;
-        images.push({ name: filename, blob });
+        const filename = `${poletagValue}_${label.replace(" ", "_")}.jpg`;
+        const imgObj = { name: filename, blob };
+        addImageTemp(imgObj);
+
         const img = document.createElement("img");
         img.src = URL.createObjectURL(blob);
         img.width = 100;
@@ -128,13 +129,61 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
       }, "image/jpeg");
     }
 
-    function nextEntry() {
+    // ---------------- INDEXEDDB ----------------
+    function initDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open("SurveyDB", 1);
+        request.onupgradeneeded = e => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains("entries")) {
+            db.createObjectStore("entries", { keyPath: "id", autoIncrement: true });
+          }
+        };
+        request.onsuccess = e => resolve(e.target.result);
+        request.onerror = e => reject(e.target.error);
+      });
+    }
+
+    async function saveEntryToDB(entry) {
+      const db = await initDB();
+      const tx = db.transaction("entries", "readwrite");
+      tx.objectStore("entries").add(entry);
+    }
+
+    async function getAllEntries() {
+      const db = await initDB();
+      return new Promise(resolve => {
+        const tx = db.transaction("entries", "readonly");
+        const store = tx.objectStore("entries");
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result);
+      });
+    }
+
+    async function clearDB() {
+      const db = await initDB();
+      const tx = db.transaction("entries", "readwrite");
+      tx.objectStore("entries").clear();
+      document.getElementById("imagePreview").innerHTML = "";
+      alert("All saved survey data cleared.");
+    }
+
+    // ---------------- ENTRY HANDLING ----------------
+    let tempImages = [];
+    function addImageTemp(img) {
+      tempImages.push(img);
+    }
+
+    async function nextEntry() {
       const poletag = document.getElementById("poletag").value || "Entry";
       const remarks = document.getElementById("description").value || "";
       const lat = document.getElementById("latitude").value;
       const lng = document.getElementById("longitude").value;
-      entries.push({ poletag, remarks, lat, lng, images: [...images] });
-      images = [];
+
+      const entry = { poletag, remarks, lat, lng, images: [...tempImages] };
+      await saveEntryToDB(entry);
+
+      tempImages = [];
       document.getElementById("imagePreview").innerHTML = "";
       document.getElementById("poletag").value = "";
       document.getElementById("description").value = "";
@@ -144,6 +193,7 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
       const zip = new JSZip();
       const csv = ["Name,Description,Latitude,Longitude"];
 
+      const entries = await getAllEntries();
       for (let entry of entries) {
         csv.push(`${entry.poletag},${entry.remarks},${entry.lat},${entry.lng}`);
         const folder = zip.folder(entry.poletag);
@@ -159,11 +209,17 @@ button { font-size: 18px; padding: 12px; border-radius: 6px; }
       link.download = "FTTH_Survey_Export.zip";
       link.click();
     }
-  </script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<footer style="text-align: center; font-size: 0.9em; color: #777; padding: 1em 0;">
-  Built for fiber techs. Powered by OpenAI × GitHub.<br>
-  Pole RTA survey App. © 2025 Erfe Jr Quiao. All rights reserved.
 
+    // ---------------- AUTO-LOAD ----------------
+    window.onload = async () => {
+      const entries = await getAllEntries();
+      console.log("Loaded from DB:", entries);
+    };
+  </script>
+
+  <footer style="text-align: center; font-size: 0.9em; color: #777; padding: 1em 0;">
+    Built for fiber techs. Powered by OpenAI × GitHub.<br>
+    Pole RTA survey App. © 2025 Erfe Jr Quiao. All rights reserved.
+  </footer>
 </body>
 </html>
