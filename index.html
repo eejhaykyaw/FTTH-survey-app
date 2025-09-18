@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Survey App</title>
+  <title>RTA Survey App</title>
   <style>
     body { font-family: Arial; margin: 0; padding: 0; }
     #map { height: 300px; width: 100%; }
@@ -16,15 +16,20 @@
 </head>
 <body>
   <div class="section">
-    <h2>Survey App</h2>
+    <h2>RTA Survey App</h2>
     <div id="map"></div>
     <button onclick="getCurrentLocation()">📍 Use Current Location</button>
-    <input id="latitude" placeholder="Latitude" />
-    <input id="longitude" placeholder="Longitude" />
-    <input id="poletag" placeholder="Name or Pole Tag" />
-    <input id="description" placeholder="Description or Remarks" />
-  </div>
-  <div class="section">
+<!-- Row 1: Lat / Lng -->
+<div style="display:flex; gap:10px; justify-content:center; margin:6px 0;">
+  <input id="latitude" placeholder="Latitude" style="width:140px;" />
+  <input id="longitude" placeholder="Longitude" style="width:140px;" />
+</div>
+
+<!-- Row 2: Name / Description -->
+<div style="display:flex; gap:10px; justify-content:center; margin:6px 0;">
+  <input id="poletag" placeholder="Name or Pole Tag" style="width:180px;" />
+  <input id="description" placeholder="Description or Remarks" style="width:260px;" />
+</div>  <div class="section">
     <video id="camera" autoplay muted playsinline></video>
     <input type="range" id="zoomSlider" class="zoom-slider" min="1" max="3" step="0.1">
     <div class="buttons">
